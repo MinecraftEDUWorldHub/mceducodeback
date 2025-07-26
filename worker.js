@@ -1,4 +1,11 @@
-import { v4 as uuidv4 } from 'uuid';
+// Simple UUIDv4 generator (no external deps)
+function uuidv4() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0,
+          v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
 
 const htmlPages = {
   login: `<!DOCTYPE html>
@@ -403,7 +410,7 @@ export default {
       return new Response(JSON.stringify({success:true}), {headers:{'Content-Type':'application/json'}});
     }
 
-    // API: Change password (admin can change any, user can change own)
+    // API: Change password (admin or self)
     if(path === '/api/change-password' && request.method === 'POST') {
       const user = await getUserFromToken(env, request.headers.get('Authorization'));
       if(!user) return new Response(JSON.stringify({error:'Unauthorized'}), {status:401, headers:{'Content-Type':'application/json'}});
@@ -411,7 +418,6 @@ export default {
       const { username, newPassword } = await parseJSON(request);
       if(!username || !newPassword) return new Response(JSON.stringify({error:'Missing fields'}), {status:400, headers:{'Content-Type':'application/json'}});
 
-      // Only admin or self can change
       if(user.role !== 'admin' && user.username !== username) {
         return new Response(JSON.stringify({error:'Forbidden'}), {status:403, headers:{'Content-Type':'application/json'}});
       }
@@ -426,7 +432,7 @@ export default {
       return new Response(JSON.stringify({success:true}), {headers:{'Content-Type':'application/json'}});
     }
 
-    // 404 fallback
+    // Default 404
     return new Response('Not found', {status:404});
   }
 };
