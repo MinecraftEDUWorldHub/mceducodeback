@@ -4,5 +4,5 @@ compatibility_date = "2025-07-26"
 account_id = "ab9aa98b3b4a7bb160a39c16be0fabe1"
 
 kv_namespaces = [
-  { binding = "KV", id = "7f72965eaf22448b9e63ae94774b5458" }
+  { binding = "CODES", id = "7f72965eaf22448b9e63ae94774b5458" }
 ]
