@@ -22,12 +22,13 @@ const htmlPages = {
       if(data.token) {
         localStorage.setItem('token', data.token);
         localStorage.setItem('role', data.role);
+        localStorage.setItem('username', data.username);
         window.location.href = '/dashboard';
       } else alert(data.error || 'Login failed');
     }
   </script>
 </body></html>`,
-  
+
   dashboard: `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><title>Dashboard</title></head>
@@ -35,6 +36,7 @@ const htmlPages = {
   <h2>My Worlds</h2>
   <button onclick="logout()" style="position: fixed; bottom: 10px; right: 10px;">Logout</button>
   <button onclick="createWorld()">Create New World</button>
+  <button onclick="changeMyPassword()">Change My Password</button>
   <div id="worlds"></div>
   <script>
     const token = localStorage.getItem('token');
@@ -94,9 +96,23 @@ const htmlPages = {
       else alert('Failed to create world');
     }
 
+    async function changeMyPassword() {
+      const newPw = prompt('Enter your new password');
+      if(!newPw) return alert('Cancelled');
+      const username = localStorage.getItem('username');
+      const res = await fetch('/api/change-password', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', Authorization: token},
+        body: JSON.stringify({username, newPassword: newPw})
+      });
+      const data = await res.json();
+      alert(data.success ? 'Password changed' : 'Error: ' + (data.error || 'unknown'));
+    }
+
     function logout() {
       localStorage.removeItem('token');
       localStorage.removeItem('role');
+      localStorage.removeItem('username');
       window.location.href = '/login';
     }
 
@@ -141,7 +157,10 @@ const htmlPages = {
           <td>\${acc.role}</td>
           <td><span class="password-hidden" id="pw-\${acc.username}">••••••••</span>
               <button onclick="togglePassword('\${acc.username}', '\${acc.password}')">View</button></td>
-          <td><button class="btn btn-danger" onclick="deleteUser('\${acc.username}')">Delete</button></td>
+          <td>
+            <button onclick="changePassword('\${acc.username}')">Change Password</button>
+            <button class="btn btn-danger" onclick="deleteUser('\${acc.username}')">Delete</button>
+          </td>
         \`;
         tbody.appendChild(tr);
       });
@@ -151,6 +170,18 @@ const htmlPages = {
       const el = document.getElementById('pw-' + username);
       if(el.textContent === '••••••••') el.textContent = pw;
       else el.textContent = '••••••••';
+    }
+
+    async function changePassword(username) {
+      const newPw = prompt('Enter new password for ' + username);
+      if (!newPw) return alert('Cancelled');
+      const res = await fetch('/api/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: token },
+        body: JSON.stringify({ username, newPassword: newPw })
+      });
+      const data = await res.json();
+      alert(data.success ? 'Password changed' : 'Error: ' + (data.error || 'unknown'));
     }
 
     async function deleteUser(username) {
@@ -187,13 +218,13 @@ async function parseJSON(req) {
 
 async function getUserFromToken(env, token) {
   if(!token) return null;
-  const session = await env.CODES.get(`session:${token}`);
-  if(!session) return null;
-  const data = JSON.parse(session);
-  if(Date.now() > data.expires) return null;
-  const userRecord = await env.CODES.get(`user:${data.username}`);
-  if(!userRecord) return null;
-  return {...JSON.parse(userRecord), username: data.username};
+  const sessionRaw = await env.CODES.get(`session:${token}`);
+  if(!sessionRaw) return null;
+  const session = JSON.parse(sessionRaw);
+  if(Date.now() > session.expires) return null;
+  const userRaw = await env.CODES.get(`user:${session.username}`);
+  if(!userRaw) return null;
+  return {...JSON.parse(userRaw), username: session.username};
 }
 
 async function requireRole(env, req, roles) {
@@ -372,8 +403,30 @@ export default {
       return new Response(JSON.stringify({success:true}), {headers:{'Content-Type':'application/json'}});
     }
 
-    // API: Invite management (create, list, etc) -- to be implemented similarly
+    // API: Change password (admin can change any, user can change own)
+    if(path === '/api/change-password' && request.method === 'POST') {
+      const user = await getUserFromToken(env, request.headers.get('Authorization'));
+      if(!user) return new Response(JSON.stringify({error:'Unauthorized'}), {status:401, headers:{'Content-Type':'application/json'}});
 
-    return new Response('Not Found', {status:404});
+      const { username, newPassword } = await parseJSON(request);
+      if(!username || !newPassword) return new Response(JSON.stringify({error:'Missing fields'}), {status:400, headers:{'Content-Type':'application/json'}});
+
+      // Only admin or self can change
+      if(user.role !== 'admin' && user.username !== username) {
+        return new Response(JSON.stringify({error:'Forbidden'}), {status:403, headers:{'Content-Type':'application/json'}});
+      }
+
+      const targetRaw = await env.CODES.get(`user:${username}`);
+      if(!targetRaw) return new Response(JSON.stringify({error:'User not found'}), {status:404, headers:{'Content-Type':'application/json'}});
+
+      const target = JSON.parse(targetRaw);
+      target.password = newPassword;
+      await env.CODES.put(`user:${username}`, JSON.stringify(target));
+
+      return new Response(JSON.stringify({success:true}), {headers:{'Content-Type':'application/json'}});
+    }
+
+    // 404 fallback
+    return new Response('Not found', {status:404});
   }
 };
