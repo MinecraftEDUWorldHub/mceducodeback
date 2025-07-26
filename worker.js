@@ -1,624 +1,379 @@
-const TOKEN_TTL_SECONDS = 86400; // 1 day token expiration
+import { v4 as uuidv4 } from 'uuid';
+
+const htmlPages = {
+  login: `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Login</title></head>
+<body>
+  <h2>Login</h2>
+  <input id="username" placeholder="Username" /><br />
+  <input id="password" type="password" placeholder="Password" /><br />
+  <button onclick="login()">Login</button>
+  <script>
+    async function login() {
+      const username = document.getElementById('username').value;
+      const password = document.getElementById('password').value;
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({username, password})
+      });
+      const data = await res.json();
+      if(data.token) {
+        localStorage.setItem('token', data.token);
+        localStorage.setItem('role', data.role);
+        window.location.href = '/dashboard';
+      } else alert(data.error || 'Login failed');
+    }
+  </script>
+</body></html>`,
+  
+  dashboard: `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Dashboard</title></head>
+<body>
+  <h2>My Worlds</h2>
+  <button onclick="logout()" style="position: fixed; bottom: 10px; right: 10px;">Logout</button>
+  <button onclick="createWorld()">Create New World</button>
+  <div id="worlds"></div>
+  <script>
+    const token = localStorage.getItem('token');
+    if(!token) location.href = '/login';
+
+    async function fetchWorlds() {
+      const res = await fetch('/api/worlds', {
+        headers: { Authorization: token }
+      });
+      const data = await res.json();
+      const container = document.getElementById('worlds');
+      container.innerHTML = '';
+      data.forEach(world => {
+        const div = document.createElement('div');
+        div.style = 'border:1px solid #ccc; margin:10px; padding:10px;';
+        div.innerHTML = \`
+          <input placeholder="World Name" value="\${world.worldName || ''}" data-id="\${world.id}" class="worldName" /><br/>
+          <input placeholder="Word 1" value="\${world.word1 || ''}" class="word1" /><br/>
+          <input placeholder="Word 2" value="\${world.word2 || ''}" class="word2" /><br/>
+          <input placeholder="Word 3" value="\${world.word3 || ''}" class="word3" /><br/>
+          <input placeholder="Word 4" value="\${world.word4 || ''}" class="word4" /><br/>
+          <input placeholder="World Connection ID (optional)" value="\${world.connectionId || ''}" class="connectionId" /><br/>
+          <small>Owner: \${world.owner}</small><br/>
+          <button onclick="saveWorld(this)">Save</button>
+        \`;
+        container.appendChild(div);
+      });
+    }
+
+    async function saveWorld(button) {
+      const div = button.parentElement;
+      const id = div.querySelector('.worldName').dataset.id;
+      const worldName = div.querySelector('.worldName').value;
+      const word1 = div.querySelector('.word1').value;
+      const word2 = div.querySelector('.word2').value;
+      const word3 = div.querySelector('.word3').value;
+      const word4 = div.querySelector('.word4').value;
+      const connectionId = div.querySelector('.connectionId').value;
+
+      const res = await fetch('/api/update-world', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', Authorization: token},
+        body: JSON.stringify({id, data: {worldName, word1, word2, word3, word4, connectionId}})
+      });
+      const data = await res.json();
+      if(data.success) alert('Saved!');
+      else alert('Failed: ' + (data.error || 'unknown'));
+    }
+
+    async function createWorld() {
+      const res = await fetch('/api/create-world', {
+        method: 'POST',
+        headers: { Authorization: token }
+      });
+      const data = await res.json();
+      if(data.success) fetchWorlds();
+      else alert('Failed to create world');
+    }
+
+    function logout() {
+      localStorage.removeItem('token');
+      localStorage.removeItem('role');
+      window.location.href = '/login';
+    }
+
+    fetchWorlds();
+  </script>
+</body>
+</html>`,
+
+  admin: `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Admin Panel</title>
+<style>
+  body { font-family: sans-serif; padding: 20px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #ccc; padding: 8px; }
+  .btn { padding: 6px 12px; cursor: pointer; }
+  .btn-danger { background-color: #dc3545; color: white; }
+  .password-hidden { font-family: monospace; color: #aaa; }
+</style>
+</head>
+<body>
+  <h2>Account Management</h2>
+  <table id="accountsTable">
+    <thead>
+      <tr><th>Username</th><th>Role</th><th>Password</th><th>Actions</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+  <script>
+    const token = localStorage.getItem('token');
+    if(!token) location.href = '/login';
+
+    async function loadAccounts() {
+      const res = await fetch('/api/accounts', {headers: {Authorization: token}});
+      const accounts = await res.json();
+      const tbody = document.querySelector('#accountsTable tbody');
+      tbody.innerHTML = '';
+      accounts.forEach(acc => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = \`
+          <td>\${acc.username}</td>
+          <td>\${acc.role}</td>
+          <td><span class="password-hidden" id="pw-\${acc.username}">••••••••</span>
+              <button onclick="togglePassword('\${acc.username}', '\${acc.password}')">View</button></td>
+          <td><button class="btn btn-danger" onclick="deleteUser('\${acc.username}')">Delete</button></td>
+        \`;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function togglePassword(username, pw) {
+      const el = document.getElementById('pw-' + username);
+      if(el.textContent === '••••••••') el.textContent = pw;
+      else el.textContent = '••••••••';
+    }
+
+    async function deleteUser(username) {
+      const confirmPw = prompt('Enter your admin password to confirm deletion of ' + username);
+      const confirmDelete = confirm('Are you sure you want to delete ' + username + '? This action cannot be undone.');
+      if(!confirmPw || !confirmDelete) return;
+      const res = await fetch('/api/delete-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: token },
+        body: JSON.stringify({ username, confirmPassword: confirmPw, confirm: true })
+      });
+      const data = await res.json();
+      if(data.success) {
+        alert('Deleted ' + username);
+        loadAccounts();
+      } else {
+        alert('Error: ' + (data.error || 'unknown'));
+      }
+    }
+
+    loadAccounts();
+  </script>
+</body>
+</html>`
+};
+
+async function parseJSON(req) {
+  try {
+    return await req.json();
+  } catch {
+    return {};
+  }
+}
+
+async function getUserFromToken(env, token) {
+  if(!token) return null;
+  const session = await env.CODES.get(`session:${token}`);
+  if(!session) return null;
+  const data = JSON.parse(session);
+  if(Date.now() > data.expires) return null;
+  const userRecord = await env.CODES.get(`user:${data.username}`);
+  if(!userRecord) return null;
+  return {...JSON.parse(userRecord), username: data.username};
+}
+
+async function requireRole(env, req, roles) {
+  const token = req.headers.get('Authorization');
+  const user = await getUserFromToken(env, token);
+  if(!user || !roles.includes(user.role)) return null;
+  return user;
+}
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    const json = (data, status = 200) =>
-      new Response(JSON.stringify(data), {
-        status,
-        headers: { "Content-Type": "application/json" },
-      });
-
-    const parseJSON = async (req) => {
-      try {
-        return await req.json();
-      } catch {
-        return {};
-      }
-    };
-
-    const uuid = () => crypto.randomUUID();
-
-    async function getUserFromToken(auth) {
-      if (!auth?.startsWith("Bearer ")) return null;
-      const token = auth.slice(7);
-      const tokenDataRaw = await env.CODES.get(`token:${token}`);
-      if (!tokenDataRaw) return null;
-      try {
-        return JSON.parse(tokenDataRaw);
-      } catch {
-        return null;
-      }
+    // Serve embedded HTML pages
+    if(request.method === 'GET') {
+      if(path === '/login') return new Response(htmlPages.login, {headers: {'Content-Type':'text/html'}});
+      if(path === '/dashboard') return new Response(htmlPages.dashboard, {headers: {'Content-Type':'text/html'}});
+      if(path === '/admin') return new Response(htmlPages.admin, {headers: {'Content-Type':'text/html'}});
     }
 
-    async function requireAuth(req) {
-      const user = await getUserFromToken(req.headers.get("Authorization"));
-      if (!user) return null;
-      return user;
-    }
-
-    async function requireAdmin(req) {
-      const user = await requireAuth(req);
-      if (!user || !user.admin) return null;
-      return user;
-    }
-
-    async function checkCreationPassword(input) {
-      const stored = await env.CODES.get("config:creation_password");
-      const expected = stored || "pickled";
-      return input === expected;
-    }
-
-    async function validateInviteCode(inviteCode) {
-      if (!inviteCode) return false;
-      const inviteRaw = await env.CODES.get(`invite:${inviteCode}`);
-      if (!inviteRaw) return false;
-      let invite;
-      try {
-        invite = JSON.parse(inviteRaw);
-      } catch {
-        return false;
-      }
-      if (invite.expireAt && Date.now() > invite.expireAt) return false;
-      if (invite.oneTime && invite.used) return false;
-      return invite;
-    }
-
-    async function markInviteUsed(inviteCode) {
-      const inviteRaw = await env.CODES.get(`invite:${inviteCode}`);
-      if (!inviteRaw) return;
-      let invite = JSON.parse(inviteRaw);
-      if (invite.oneTime) {
-        invite.used = true;
-        await env.CODES.put(`invite:${inviteCode}`, JSON.stringify(invite));
-      }
-    }
-
-    if (path === "/login.html") {
-      return new Response(loginPage, {
-        headers: { "Content-Type": "text/html; charset=utf-8" },
-      });
-    }
-
-    if (path === "/signup") {
-      return new Response(signupPage, {
-        headers: { "Content-Type": "text/html; charset=utf-8" },
-      });
-    }
-
-    if (path === "/") {
-      return new Response(dashboardPage, {
-        headers: { "Content-Type": "text/html; charset=utf-8" },
-      });
-    }
-
-    if (path === "/api/register" && request.method === "POST") {
-      const { username, password, creationPassword, inviteCode } = await parseJSON(
-        request
-      );
-
-      const hasValidCreationPassword = await checkCreationPassword(creationPassword);
-      const invite = await validateInviteCode(inviteCode);
-
-      if (!hasValidCreationPassword && !invite) {
-        return json({ error: "Must provide valid creation password or invite code" }, 403);
-      }
-
-      const existingUser = await env.CODES.get(`user:${username}`);
-      if (existingUser) return json({ error: "Username exists" }, 400);
-
-      await env.CODES.put(
-        `user:${username}`,
-        JSON.stringify({ password, admin: false })
-      );
-
-      if (invite && invite.oneTime) {
-        await markInviteUsed(inviteCode);
-      }
-
-      return json({ ok: true });
-    }
-
-    if (path === "/api/login" && request.method === "POST") {
+    // API: Login
+    if(path === '/api/login' && request.method === 'POST') {
       const { username, password } = await parseJSON(request);
-      const userRaw = await env.CODES.get(`user:${username}`);
-      if (!userRaw) return json({ error: "Invalid" }, 401);
-      const user = JSON.parse(userRaw);
-      if (user.password !== password) return json({ error: "Invalid" }, 401);
-
-      const token = uuid();
-      const tokenData = {
-        username,
-        admin: user.admin,
-        createdAt: Date.now(),
-      };
-
-      await env.CODES.put(`token:${token}`, JSON.stringify(tokenData), {
-        expirationTtl: TOKEN_TTL_SECONDS,
-      });
-
-      return json({ token, admin: user.admin });
+      if(!username || !password) return new Response(JSON.stringify({error:'Invalid'}), {status:401, headers: {'Content-Type':'application/json'}});
+      const record = await env.CODES.get(`user:${username}`);
+      if(!record) return new Response(JSON.stringify({error:'Invalid'}), {status:401, headers: {'Content-Type':'application/json'}});
+      const user = JSON.parse(record);
+      if(user.password !== password) return new Response(JSON.stringify({error:'Invalid'}), {status:401, headers: {'Content-Type':'application/json'}});
+      const token = uuidv4();
+      const expires = Date.now() + 86400000; // 1 day
+      await env.CODES.put(`session:${token}`, JSON.stringify({username, expires}), {expirationTtl: 86400});
+      return new Response(JSON.stringify({token, username, role: user.role}), {headers: {'Content-Type':'application/json'}});
     }
 
-    if (path === "/api/load" && request.method === "GET") {
-      const user = await requireAuth(request);
-      if (!user) return json({ error: "Unauthorized" }, 401);
-      const raw = await env.CODES.get(`data:${user.username}`);
-      return json(raw ? JSON.parse(raw) : {});
-    }
+    // API: Signup - requires invite code or creation password
+    if(path === '/api/signup' && request.method === 'POST') {
+      const { username, password, inviteCode, creationPassword } = await parseJSON(request);
+      if(!username || !password) return new Response(JSON.stringify({error:'Missing fields'}), {status:400, headers:{'Content-Type':'application/json'}});
 
-    if (path === "/api/save" && request.method === "POST") {
-      const user = await requireAuth(request);
-      if (!user) return json({ error: "Unauthorized" }, 401);
-      const data = await parseJSON(request);
-      await env.CODES.put(`data:${user.username}`, JSON.stringify(data));
-      return json({ ok: true });
-    }
-
-    if (path === "/api/set-creation-password" && request.method === "POST") {
-      const admin = await requireAdmin(request);
-      if (!admin) return json({ error: "Unauthorized" }, 401);
-      const { newPassword } = await parseJSON(request);
-      if (!newPassword) return json({ error: "Missing new password" }, 400);
-      await env.CODES.put("config:creation_password", newPassword);
-      return json({ ok: true });
-    }
-
-    if (path === "/api/invites/create" && request.method === "POST") {
-      const admin = await requireAdmin(request);
-      if (!admin) return json({ error: "Unauthorized" }, 401);
-      const { oneTime, expireSeconds } = await parseJSON(request);
-      const code = uuid().slice(0, 8);
-
-      const invite = {
-        code,
-        oneTime: !!oneTime,
-        expireAt: expireSeconds ? Date.now() + expireSeconds * 1000 : null,
-        used: false,
-        createdBy: admin.username,
-      };
-
-      await env.CODES.put(`invite:${code}`, JSON.stringify(invite));
-      return json({ ok: true, invite });
-    }
-
-    if (path === "/api/invites/list" && request.method === "GET") {
-      const admin = await requireAdmin(request);
-      if (!admin) return json({ error: "Unauthorized" }, 401);
-
-      const list = await env.CODES.list({ prefix: "invite:" });
-      const invites = [];
-      for (const key of list.keys) {
-        const raw = await env.CODES.get(key.name);
-        if (!raw) continue;
-        invites.push(JSON.parse(raw));
+      // Check if user exists
+      if(await env.CODES.get(`user:${username}`)) {
+        return new Response(JSON.stringify({error:'Username exists'}), {status:400, headers:{'Content-Type':'application/json'}});
       }
-      return json({ invites });
-    }
 
-    if (path === "/api/invites/delete" && request.method === "POST") {
-      const admin = await requireAdmin(request);
-      if (!admin) return json({ error: "Unauthorized" }, 401);
-      const { code } = await parseJSON(request);
-      if (!code) return json({ error: "Missing invite code" }, 400);
-      await env.CODES.delete(`invite:${code}`);
-      return json({ ok: true });
-    }
+      // Check invite or creation password
+      const storedCreationPass = await env.CODES.get('creationPassword') || 'pickled';
+      let allowed = false;
 
-    if (path === "/api/account/delete" && request.method === "POST") {
-      const user = await requireAuth(request);
-      if (!user) return json({ error: "Unauthorized" }, 401);
+      if(creationPassword && creationPassword === storedCreationPass) allowed = true;
 
-      const { confirm } = await parseJSON(request);
-      if (confirm !== true) return json({ error: "Confirmation required" }, 400);
-
-      await env.CODES.delete(`user:${user.username}`);
-      await env.CODES.delete(`data:${user.username}`);
-
-      // Delete tokens for user
-      const keys = await env.CODES.list({ prefix: "token:" });
-      for (const key of keys.keys) {
-        const tokenRaw = await env.CODES.get(key.name);
-        if (!tokenRaw) continue;
-        try {
-          const tokenData = JSON.parse(tokenRaw);
-          if (tokenData.username === user.username) {
-            await env.CODES.delete(key.name);
+      if(inviteCode) {
+        const inviteRaw = await env.CODES.get(`invite:${inviteCode}`);
+        if(inviteRaw) {
+          const invite = JSON.parse(inviteRaw);
+          if(invite.used) {
+            return new Response(JSON.stringify({error:'Invite used'}), {status:403, headers:{'Content-Type':'application/json'}});
           }
-        } catch {}
+          allowed = true;
+          if(invite.oneTime) {
+            invite.used = true;
+            await env.CODES.put(`invite:${inviteCode}`, JSON.stringify(invite));
+          }
+        }
       }
 
-      return json({ ok: true });
+      if(!allowed) return new Response(JSON.stringify({error:'Unauthorized'}), {status:401, headers:{'Content-Type':'application/json'}});
+
+      const newUser = { password, role: 'user' };
+      await env.CODES.put(`user:${username}`, JSON.stringify(newUser));
+      return new Response(JSON.stringify({success:true}), {headers: {'Content-Type':'application/json'}});
     }
 
-    if (path === "/public") {
-      const keys = await env.CODES.list({ prefix: "data:" });
-      const allCodes = [];
-      for (const key of keys.keys) {
-        const raw = await env.CODES.get(key.name);
-        if (!raw) continue;
-        try {
-          const codes = JSON.parse(raw);
-          if (Array.isArray(codes)) allCodes.push(...codes);
-          else allCodes.push(codes);
-        } catch {}
-      }
-      return json(allCodes);
+    // API: Get worlds - admin/manager see all, users see only their own
+    if(path === '/api/worlds' && request.method === 'GET') {
+      const token = request.headers.get('Authorization');
+      const user = await getUserFromToken(env, token);
+      if(!user) return new Response(JSON.stringify({error:'Unauthorized'}), {status:401, headers:{'Content-Type':'application/json'}});
+
+      const list = await env.CODES.list({prefix:'world:'});
+      const allWorlds = await Promise.all(list.keys.map(k => env.CODES.get(k.name).then(v => ({id:k.name.replace('world:',''), ...JSON.parse(v)}))));
+
+      let filtered;
+      if(user.role === 'admin' || user.role === 'manager') filtered = allWorlds;
+      else filtered = allWorlds.filter(w => w.owner === user.username);
+
+      return new Response(JSON.stringify(filtered), {headers: {'Content-Type':'application/json'}});
     }
 
-    return new Response("Not found", { status: 404 });
-  },
-};
+    // API: Create world
+    if(path === '/api/create-world' && request.method === 'POST') {
+      const token = request.headers.get('Authorization');
+      const user = await getUserFromToken(env, token);
+      if(!user) return new Response(JSON.stringify({error:'Unauthorized'}), {status:401, headers:{'Content-Type':'application/json'}});
 
-const loginPage = `<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><title>Login</title></head>
-<body>
-<h2>Login</h2>
-<form onsubmit="event.preventDefault();login();">
-  <input id="username" placeholder="Username" required /><br/>
-  <input id="password" type="password" placeholder="Password" required /><br/>
-  <button type="submit">Login</button>
-</form>
-<p id="error" style="color:red;"></p>
-<script>
-async function login() {
-  const username = document.getElementById("username").value;
-  const password = document.getElementById("password").value;
-  const res = await fetch("/api/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password })
-  });
-  const data = await res.json();
-  if (res.ok) {
-    localStorage.setItem("token", data.token);
-    localStorage.setItem("admin", data.admin);
-    location.href = "/";
-  } else {
-    document.getElementById("error").textContent = data.error || "Login failed";
-  }
-}
-</script>
-<p>Don't have an account? <a href="/signup">Sign up</a></p>
-</body>
-</html>`;
-
-const signupPage = `<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><title>Sign Up</title></head>
-<body>
-<h2>Sign Up</h2>
-<form onsubmit="event.preventDefault();signup();">
-  <input id="username" placeholder="Username" required /><br/>
-  <input id="password" type="password" placeholder="Password" required /><br/>
-  <input id="creationPassword" type="password" placeholder="Creation Password (optional)" /><br/>
-  <input id="inviteCode" placeholder="Invite Code (optional)" /><br/>
-  <button type="submit">Sign Up</button>
-</form>
-<p id="error" style="color:red;"></p>
-<script>
-async function signup() {
-  const username = document.getElementById("username").value;
-  const password = document.getElementById("password").value;
-  const creationPassword = document.getElementById("creationPassword").value;
-  const inviteCode = document.getElementById("inviteCode").value;
-  const res = await fetch("/api/register", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password, creationPassword, inviteCode })
-  });
-  const data = await res.json();
-  if (res.ok) {
-    alert("Account created! Please login.");
-    location.href = "/login.html";
-  } else {
-    document.getElementById("error").textContent = data.error || "Signup failed";
-  }
-}
-</script>
-<p>Already have an account? <a href="/login.html">Login</a></p>
-</body>
-</html>`;
-
-const dashboardPage = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Dashboard</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      max-width: 700px;
-      margin: auto;
-      padding: 20px;
-    }
-    input,
-    button {
-      margin: 5px 0;
-      padding: 8px;
-      width: 100%;
-      max-width: 300px;
-    }
-    #logoutBtn {
-      position: fixed;
-      bottom: 10px;
-      right: 10px;
-    }
-    table {
-      border-collapse: collapse;
-      width: 100%;
-      margin-top: 10px;
-    }
-    th,
-    td {
-      border: 1px solid #ccc;
-      padding: 8px;
-      text-align: left;
-    }
-    .admin-section {
-      border: 1px solid #999;
-      padding: 10px;
-      margin-top: 20px;
-    }
-    .error {
-      color: red;
-    }
-    .success {
-      color: green;
-    }
-  </style>
-</head>
-<body>
-  <h2>Dashboard</h2>
-
-  <h3>Your Minecraft Education Code</h3>
-  <input id="worldName" placeholder="World Name" /><br />
-  <input id="word1" placeholder="Word 1" maxlength="16" />
-  <input id="word2" placeholder="Word 2" maxlength="16" />
-  <input id="word3" placeholder="Word 3" maxlength="16" />
-  <input id="word4" placeholder="Word 4" maxlength="16" /><br />
-  <input id="worldConnectionId" placeholder="World Connection ID (optional)" /><br />
-  <button onclick="saveCodes()">Save</button>
-  <p id="saveStatus"></p>
-
-  <hr />
-
-  <h3>Invite Codes Management <small>(Admins only)</small></h3>
-  <div id="inviteSection" style="display: none">
-    <button onclick="loadInvites()">Refresh Invite List</button><br />
-    <table id="invitesTable">
-      <thead>
-        <tr>
-          <th>Code</th>
-          <th>One-time</th>
-          <th>Expires At</th>
-          <th>Used</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
-    <h4>Create New Invite</h4>
-    <label><input type="checkbox" id="inviteOneTime" /> One-time use</label><br />
-    <label>Expire in (seconds, 0 = never):
-      <input type="number" id="inviteExpire" value="0" min="0" />
-    </label>
-    <br />
-    <button onclick="createInvite()">Create Invite</button>
-    <p id="inviteCreateStatus"></p>
-  </div>
-
-  <hr />
-
-  <h3>Change Signup Password <small>(Admins only)</small></h3>
-  <div id="creationPassSection" style="display: none">
-    <input
-      type="password"
-      id="newCreationPassword"
-      placeholder="New Signup Password"
-    /><br />
-    <button onclick="changeCreationPassword()">Update Signup Password</button>
-    <p id="creationPassStatus"></p>
-  </div>
-
-  <hr />
-
-  <h3>Delete Account</h3>
-  <p><strong>Warning:</strong> This action is irreversible. Please confirm below to delete your account.</p>
-  <label><input type="checkbox" id="confirmDelete" /> I understand and want to delete my account.</label><br />
-  <button onclick="deleteAccount()">Delete Account</button>
-  <p id="deleteStatus"></p>
-
-  <button id="logoutBtn" onclick="logout()">Logout</button>
-
-  <script>
-    const token = localStorage.getItem("token");
-    const admin = localStorage.getItem("admin") === "true";
-
-    if (!token) {
-      location.href = "/login.html";
-    }
-
-    if (admin) {
-      document.getElementById("inviteSection").style.display = "block";
-      document.getElementById("creationPassSection").style.display = "block";
-      loadInvites();
-    }
-
-    async function loadInvites() {
-      const res = await fetch("/api/invites/list", {
-        headers: { Authorization: "Bearer " + token },
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || "Failed to load invites");
-        return;
-      }
-      const tbody = document.querySelector("#invitesTable tbody");
-      tbody.innerHTML = "";
-      data.invites.forEach((invite) => {
-        const tr = document.createElement("tr");
-        tr.innerHTML = \`
-        <td>\${invite.code}</td>
-        <td>\${invite.oneTime ? "Yes" : "No"}</td>
-        <td>\${
-          invite.expireAt ? new Date(invite.expireAt).toLocaleString() : "Never"
-        }</td>
-        <td>\${invite.used ? "Yes" : "No"}</td>
-        <td><button onclick="deleteInvite('\${invite.code}')">Delete</button></td>
-      \`;
-        tbody.appendChild(tr);
-      });
-    }
-
-    async function deleteInvite(code) {
-      if (!confirm("Delete invite code " + code + "?")) return;
-      const res = await fetch("/api/invites/delete", {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer " + token,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ code }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        loadInvites();
-        alert("Deleted invite " + code);
-      } else {
-        alert(data.error || "Failed to delete invite");
-      }
-    }
-
-    async function createInvite() {
-      const oneTime = document.getElementById("inviteOneTime").checked;
-      let expireSeconds = Number(document.getElementById("inviteExpire").value);
-      if (expireSeconds < 0 || isNaN(expireSeconds)) expireSeconds = 0;
-      if (expireSeconds === 0) expireSeconds = null;
-
-      const res = await fetch("/api/invites/create", {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer " + token,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ oneTime, expireSeconds }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        document.getElementById(
-          "inviteCreateStatus"
-        ).textContent = \`Invite created: \${data.invite.code}\`;
-        loadInvites();
-      } else {
-        document.getElementById("inviteCreateStatus").textContent =
-          data.error || "Failed to create invite";
-      }
-    }
-
-    async function changeCreationPassword() {
-      const newPassword =
-        document.getElementById("newCreationPassword").value.trim();
-      if (!newPassword) {
-        alert("Enter new password");
-        return;
-      }
-      const res = await fetch("/api/set-creation-password", {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer " + token,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ newPassword }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        document.getElementById("creationPassStatus").textContent =
-          "Signup password updated!";
-      } else {
-        document.getElementById("creationPassStatus").textContent =
-          data.error || "Failed to update";
-      }
-    }
-
-    async function saveCodes() {
-      const data = {
-        worldName: document.getElementById("worldName").value,
-        word1: document.getElementById("word1").value,
-        word2: document.getElementById("word2").value,
-        word3: document.getElementById("word3").value,
-        word4: document.getElementById("word4").value,
-        worldConnectionId: document.getElementById("worldConnectionId").value,
+      const id = uuidv4();
+      const defaultWorld = {
+        id,
+        owner: user.username,
+        worldName: '',
+        word1: '',
+        word2: '',
+        word3: '',
+        word4: '',
+        connectionId: ''
       };
-      const res = await fetch("/api/save", {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer " + token,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(data),
-      });
-      const resp = await res.json();
-      const statusEl = document.getElementById("saveStatus");
-      if (res.ok) {
-        statusEl.textContent = "Saved successfully!";
-        statusEl.className = "success";
-      } else {
-        statusEl.textContent = resp.error || "Failed to save";
-        statusEl.className = "error";
-      }
+
+      await env.CODES.put(`world:${id}`, JSON.stringify(defaultWorld));
+      return new Response(JSON.stringify({success:true, id}), {headers: {'Content-Type':'application/json'}});
     }
 
-    async function loadCodes() {
-      const res = await fetch("/api/load", {
-        headers: { Authorization: "Bearer " + token },
-      });
-      const data = await res.json();
-      if (res.ok) {
-        document.getElementById("worldName").value = data.worldName || "";
-        document.getElementById("word1").value = data.word1 || "";
-        document.getElementById("word2").value = data.word2 || "";
-        document.getElementById("word3").value = data.word3 || "";
-        document.getElementById("word4").value = data.word4 || "";
-        document.getElementById("worldConnectionId").value = data.worldConnectionId || "";
-      } else {
-        alert(data.error || "Failed to load codes");
+    // API: Update world
+    if(path === '/api/update-world' && request.method === 'POST') {
+      const token = request.headers.get('Authorization');
+      const user = await getUserFromToken(env, token);
+      if(!user) return new Response(JSON.stringify({error:'Unauthorized'}), {status:401, headers:{'Content-Type':'application/json'}});
+
+      const { id, data } = await parseJSON(request);
+      if(!id || !data) return new Response(JSON.stringify({error:'Missing fields'}), {status:400, headers:{'Content-Type':'application/json'}});
+
+      const existingRaw = await env.CODES.get(`world:${id}`);
+      if(!existingRaw) return new Response(JSON.stringify({error:'World not found'}), {status:404, headers:{'Content-Type':'application/json'}});
+
+      const existing = JSON.parse(existingRaw);
+
+      if(user.role !== 'admin' && existing.owner !== user.username) {
+        return new Response(JSON.stringify({error:'Forbidden'}), {status:403, headers:{'Content-Type':'application/json'}});
       }
+
+      const updated = {...existing, ...data};
+      await env.CODES.put(`world:${id}`, JSON.stringify(updated));
+      return new Response(JSON.stringify({success:true}), {headers:{'Content-Type':'application/json'}});
     }
 
-    async function deleteAccount() {
-      if (!document.getElementById("confirmDelete").checked) {
-        alert("You must confirm deletion first.");
-        return;
+    // API: List accounts (admin only)
+    if(path === '/api/accounts' && request.method === 'GET') {
+      const user = await requireRole(env, request, ['admin']);
+      if(!user) return new Response(JSON.stringify({error:'Unauthorized'}), {status:401, headers:{'Content-Type':'application/json'}});
+
+      const list = await env.CODES.list({prefix:'user:'});
+      const accounts = [];
+      for(const key of list.keys) {
+        const name = key.name.replace('user:', '');
+        const dataRaw = await env.CODES.get(key.name);
+        const data = JSON.parse(dataRaw);
+        accounts.push({username: name, role: data.role, password: data.password});
       }
-      if (!confirm("This will permanently delete your account. Continue?")) return;
-      const res = await fetch("/api/account/delete", {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer " + token,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ confirm: true }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        alert("Account deleted. Redirecting to signup.");
-        localStorage.clear();
-        location.href = "/signup";
-      } else {
-        alert(data.error || "Failed to delete account");
-      }
+      return new Response(JSON.stringify(accounts), {headers:{'Content-Type':'application/json'}});
     }
 
-    function logout() {
-      localStorage.clear();
-      location.href = "/login.html";
+    // API: Delete user (admin only, confirm with password)
+    if(path === '/api/delete-user' && request.method === 'POST') {
+      const user = await requireRole(env, request, ['admin']);
+      if(!user) return new Response(JSON.stringify({error:'Unauthorized'}), {status:401, headers:{'Content-Type':'application/json'}});
+
+      const { username, confirmPassword, confirm } = await parseJSON(request);
+      if(!username || !confirmPassword || confirm !== true) return new Response(JSON.stringify({error:'Missing confirmation'}), {status:400, headers:{'Content-Type':'application/json'}});
+
+      // Check admin password again
+      const adminDataRaw = await env.CODES.get(`user:${user.username}`);
+      const adminData = JSON.parse(adminDataRaw);
+      if(adminData.password !== confirmPassword) return new Response(JSON.stringify({error:'Incorrect password'}), {status:403, headers:{'Content-Type':'application/json'}});
+
+      await env.CODES.delete(`user:${username}`);
+
+      // Delete user's worlds as well (optional)
+      const listWorlds = await env.CODES.list({prefix:'world:'});
+      for(const w of listWorlds.keys) {
+        const worldRaw = await env.CODES.get(w.name);
+        if(worldRaw) {
+          const world = JSON.parse(worldRaw);
+          if(world.owner === username) await env.CODES.delete(w.name);
+        }
+      }
+
+      return new Response(JSON.stringify({success:true}), {headers:{'Content-Type':'application/json'}});
     }
 
-    loadCodes();
-  </script>
-</body>
-</html>`;
+    // API: Invite management (create, list, etc) -- to be implemented similarly
+
+    return new Response('Not Found', {status:404});
+  }
+};
