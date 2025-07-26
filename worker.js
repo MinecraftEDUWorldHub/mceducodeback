@@ -99,12 +99,12 @@ export default {
         request
       );
 
-      if (!(await checkCreationPassword(creationPassword))) {
-        return json({ error: "Invalid creation password" }, 403);
-      }
-
+      const hasValidCreationPassword = await checkCreationPassword(creationPassword);
       const invite = await validateInviteCode(inviteCode);
-      if (!invite) return json({ error: "Invalid or used invite code" }, 403);
+
+      if (!hasValidCreationPassword && !invite) {
+        return json({ error: "Must provide valid creation password or invite code" }, 403);
+      }
 
       const existingUser = await env.CODES.get(`user:${username}`);
       if (existingUser) return json({ error: "Username exists" }, 400);
@@ -114,7 +114,7 @@ export default {
         JSON.stringify({ password, admin: false })
       );
 
-      if (invite.oneTime) {
+      if (invite && invite.oneTime) {
         await markInviteUsed(inviteCode);
       }
 
@@ -294,8 +294,8 @@ const signupPage = `<!DOCTYPE html>
 <form onsubmit="event.preventDefault();signup();">
   <input id="username" placeholder="Username" required /><br/>
   <input id="password" type="password" placeholder="Password" required /><br/>
-  <input id="creationPassword" type="password" placeholder="Creation Password" required /><br/>
-  <input id="inviteCode" placeholder="Invite Code" required /><br/>
+  <input id="creationPassword" type="password" placeholder="Creation Password (optional)" /><br/>
+  <input id="inviteCode" placeholder="Invite Code (optional)" /><br/>
   <button type="submit">Sign Up</button>
 </form>
 <p id="error" style="color:red;"></p>
