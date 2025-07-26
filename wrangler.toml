@@ -1,4 +1,4 @@
-name = "minecraft-code-manager"
+name = "codeback"
 main = "worker.js"
 compatibility_date = "2025-07-26"
 account_id = "ab9aa98b3b4a7bb160a39c16be0fabe1"
