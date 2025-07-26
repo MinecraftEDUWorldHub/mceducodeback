@@ -9,3 +9,7 @@ TOKEN_SECRET = "wugdvuiwduiyv262347t2486"
 [[kv_namespaces]]
 binding = "CODES"
 id = "7f72965eaf22448b9e63ae94774b5458"
+
+
+[assets]
+directory = "./dist"
