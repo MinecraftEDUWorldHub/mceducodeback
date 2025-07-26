@@ -1,11 +1,10 @@
-const TOKEN_TTL_SECONDS = 86400; // 1 day token expiry
+const TOKEN_TTL_SECONDS = 86400; // 1 day token expiration
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    // Helpers
     const json = (data, status = 200) =>
       new Response(JSON.stringify(data), {
         status,
@@ -22,7 +21,6 @@ export default {
 
     const uuid = () => crypto.randomUUID();
 
-    // Auth helpers
     async function getUserFromToken(auth) {
       if (!auth?.startsWith("Bearer ")) return null;
       const token = auth.slice(7);
@@ -47,14 +45,12 @@ export default {
       return user;
     }
 
-    // Creation password check
     async function checkCreationPassword(input) {
       const stored = await env.CODES.get("config:creation_password");
       const expected = stored || "pickled";
       return input === expected;
     }
 
-    // Invite validation
     async function validateInviteCode(inviteCode) {
       if (!inviteCode) return false;
       const inviteRaw = await env.CODES.get(`invite:${inviteCode}`);
@@ -80,24 +76,28 @@ export default {
       }
     }
 
-    // === Pages ===
-
     if (path === "/login.html") {
-      return new Response(loginPage, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+      return new Response(loginPage, {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
     }
 
     if (path === "/signup") {
-      return new Response(signupPage, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+      return new Response(signupPage, {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
     }
 
     if (path === "/") {
-      return new Response(dashboardPage, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+      return new Response(dashboardPage, {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
     }
 
-    // === API ===
-
     if (path === "/api/register" && request.method === "POST") {
-      const { username, password, creationPassword, inviteCode } = await parseJSON(request);
+      const { username, password, creationPassword, inviteCode } = await parseJSON(
+        request
+      );
 
       if (!(await checkCreationPassword(creationPassword))) {
         return json({ error: "Invalid creation password" }, 403);
@@ -109,7 +109,10 @@ export default {
       const existingUser = await env.CODES.get(`user:${username}`);
       if (existingUser) return json({ error: "Username exists" }, 400);
 
-      await env.CODES.put(`user:${username}`, JSON.stringify({ password, admin: false }));
+      await env.CODES.put(
+        `user:${username}`,
+        JSON.stringify({ password, admin: false })
+      );
 
       if (invite.oneTime) {
         await markInviteUsed(inviteCode);
@@ -249,9 +252,10 @@ export default {
   },
 };
 
-// === Embedded pages ===
-
-const loginPage = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Login</title></head><body>
+const loginPage = `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Login</title></head>
+<body>
 <h2>Login</h2>
 <form onsubmit="event.preventDefault();login();">
   <input id="username" placeholder="Username" required /><br/>
@@ -279,9 +283,13 @@ async function login() {
 }
 </script>
 <p>Don't have an account? <a href="/signup">Sign up</a></p>
-</body></html>`;
+</body>
+</html>`;
 
-const signupPage = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Sign Up</title></head><body>
+const signupPage = `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Sign Up</title></head>
+<body>
 <h2>Sign Up</h2>
 <form onsubmit="event.preventDefault();signup();">
   <input id="username" placeholder="Username" required /><br/>
@@ -312,243 +320,305 @@ async function signup() {
 }
 </script>
 <p>Already have an account? <a href="/login.html">Login</a></p>
-</body></html>`;
+</body>
+</html>`;
 
-const dashboardPage = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Dashboard</title>
-<style>
-  body { font-family: Arial, sans-serif; max-width: 700px; margin: auto; padding: 20px; }
-  input, button { margin: 5px 0; padding: 8px; width: 100%; max-width: 300px; }
-  #logoutBtn { position: fixed; bottom: 10px; right: 10px; }
-  table { border-collapse: collapse; width: 100%; margin-top: 10px; }
-  th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
-  .admin-section { border: 1px solid #999; padding: 10px; margin-top: 20px; }
-  .error { color: red; }
-  .success { color: green; }
-</style>
-</head><body>
-<h2>Dashboard</h2>
-
-<h3>Your Minecraft Education Code</h3>
-<input id="worldName" placeholder="World Name" /><br/>
-<input id="word1" placeholder="Word 1" maxlength="16" />
-<input id="word2" placeholder="Word 2" maxlength="16" />
-<input id="word3" placeholder="Word 3" maxlength="16" />
-<input id="word4" placeholder="Word 4" maxlength="16" /><br/>
-<input id="worldConnectionId" placeholder="World Connection ID (optional)" /><br/>
-<button onclick="saveCodes()">Save</button>
-<p id="saveStatus"></p>
-
-<hr/>
-
-<h3>Invite Codes Management <small>(Admins only)</small></h3>
-<div id="inviteSection" style="display:none;">
-  <button onclick="loadInvites()">Refresh Invite List</button><br/>
-  <table id="invitesTable">
-    <thead><tr><th>Code</th><th>One-time</th><th>Expires At</th><th>Used</th><th>Actions</th></tr></thead>
-    <tbody></tbody>
-  </table>
-  <h4>Create New Invite</h4>
-  <label><input type="checkbox" id="inviteOneTime"/> One-time use</label><br/>
-  <label>Expire in (seconds, 0 = never): <input type="number" id="inviteExpire" value="0" min="0"/></label><br/>
-  <button onclick="createInvite()">Create Invite</button>
-  <p id="inviteCreateStatus"></p>
-</div>
-
-<hr/>
-
-<h3>Change Signup Password <small>(Admins only)</small></h3>
-<div id="creationPassSection" style="display:none;">
-  <input type="password" id="newCreationPassword" placeholder="New Signup Password" /><br/>
-  <button onclick="changeCreationPassword()">Update Signup Password</button>
-  <p id="creationPassStatus"></p>
-</div>
-
-<hr/>
-
-<h3>Delete Account</h3>
-<p><strong>Warning:</strong> This action is irreversible. Please confirm below to delete your account.</p>
-<label><input type="checkbox" id="confirmDelete"/> I understand and want to delete my account.</label><br/>
-<button onclick="deleteAccount()">Delete Account</button>
-<p id="deleteStatus"></p>
-
-<button id="logoutBtn" onclick="logout()">Logout</button>
-
-<script>
-  const token = localStorage.getItem("token");
-  const admin = localStorage.getItem("admin") === "true";
-
-  if (!token) {
-    location.href = "/login.html";
-  }
-
-  if (admin) {
-    document.getElementById("inviteSection").style.display = "block";
-    document.getElementById("creationPassSection").style.display = "block";
-    loadInvites();
-  }
-
-  async function loadInvites() {
-    const res = await fetch("/api/invites/list", {
-      headers: { Authorization: "Bearer " + token }
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      alert(data.error || "Failed to load invites");
-      return;
+const dashboardPage = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Dashboard</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 700px;
+      margin: auto;
+      padding: 20px;
     }
-    const tbody = document.querySelector("#invitesTable tbody");
-    tbody.innerHTML = "";
-    data.invites.forEach(invite => {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>${invite.code}</td>
-        <td>${invite.oneTime ? "Yes" : "No"}</td>
-        <td>${invite.expireAt ? new Date(invite.expireAt).toLocaleString() : "Never"}</td>
-        <td>${invite.used ? "Yes" : "No"}</td>
-        <td><button onclick="deleteInvite('${invite.code}')">Delete</button></td>
-      `;
-      tbody.appendChild(tr);
-    });
-  }
+    input,
+    button {
+      margin: 5px 0;
+      padding: 8px;
+      width: 100%;
+      max-width: 300px;
+    }
+    #logoutBtn {
+      position: fixed;
+      bottom: 10px;
+      right: 10px;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin-top: 10px;
+    }
+    th,
+    td {
+      border: 1px solid #ccc;
+      padding: 8px;
+      text-align: left;
+    }
+    .admin-section {
+      border: 1px solid #999;
+      padding: 10px;
+      margin-top: 20px;
+    }
+    .error {
+      color: red;
+    }
+    .success {
+      color: green;
+    }
+  </style>
+</head>
+<body>
+  <h2>Dashboard</h2>
 
-  async function deleteInvite(code) {
-    if (!confirm("Delete invite code " + code + "?")) return;
-    const res = await fetch("/api/invites/delete", {
-      method: "POST",
-      headers: {
-        "Authorization": "Bearer " + token,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ code })
-    });
-    const data = await res.json();
-    if (res.ok) {
+  <h3>Your Minecraft Education Code</h3>
+  <input id="worldName" placeholder="World Name" /><br />
+  <input id="word1" placeholder="Word 1" maxlength="16" />
+  <input id="word2" placeholder="Word 2" maxlength="16" />
+  <input id="word3" placeholder="Word 3" maxlength="16" />
+  <input id="word4" placeholder="Word 4" maxlength="16" /><br />
+  <input id="worldConnectionId" placeholder="World Connection ID (optional)" /><br />
+  <button onclick="saveCodes()">Save</button>
+  <p id="saveStatus"></p>
+
+  <hr />
+
+  <h3>Invite Codes Management <small>(Admins only)</small></h3>
+  <div id="inviteSection" style="display: none">
+    <button onclick="loadInvites()">Refresh Invite List</button><br />
+    <table id="invitesTable">
+      <thead>
+        <tr>
+          <th>Code</th>
+          <th>One-time</th>
+          <th>Expires At</th>
+          <th>Used</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <h4>Create New Invite</h4>
+    <label><input type="checkbox" id="inviteOneTime" /> One-time use</label><br />
+    <label>Expire in (seconds, 0 = never):
+      <input type="number" id="inviteExpire" value="0" min="0" />
+    </label>
+    <br />
+    <button onclick="createInvite()">Create Invite</button>
+    <p id="inviteCreateStatus"></p>
+  </div>
+
+  <hr />
+
+  <h3>Change Signup Password <small>(Admins only)</small></h3>
+  <div id="creationPassSection" style="display: none">
+    <input
+      type="password"
+      id="newCreationPassword"
+      placeholder="New Signup Password"
+    /><br />
+    <button onclick="changeCreationPassword()">Update Signup Password</button>
+    <p id="creationPassStatus"></p>
+  </div>
+
+  <hr />
+
+  <h3>Delete Account</h3>
+  <p><strong>Warning:</strong> This action is irreversible. Please confirm below to delete your account.</p>
+  <label><input type="checkbox" id="confirmDelete" /> I understand and want to delete my account.</label><br />
+  <button onclick="deleteAccount()">Delete Account</button>
+  <p id="deleteStatus"></p>
+
+  <button id="logoutBtn" onclick="logout()">Logout</button>
+
+  <script>
+    const token = localStorage.getItem("token");
+    const admin = localStorage.getItem("admin") === "true";
+
+    if (!token) {
+      location.href = "/login.html";
+    }
+
+    if (admin) {
+      document.getElementById("inviteSection").style.display = "block";
+      document.getElementById("creationPassSection").style.display = "block";
       loadInvites();
-      alert("Deleted invite " + code);
-    } else {
-      alert(data.error || "Failed to delete invite");
     }
-  }
 
-  async function createInvite() {
-    const oneTime = document.getElementById("inviteOneTime").checked;
-    let expireSeconds = Number(document.getElementById("inviteExpire").value);
-    if (expireSeconds < 0 || isNaN(expireSeconds)) expireSeconds = 0;
-    if (expireSeconds === 0) expireSeconds = null;
+    async function loadInvites() {
+      const res = await fetch("/api/invites/list", {
+        headers: { Authorization: "Bearer " + token },
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "Failed to load invites");
+        return;
+      }
+      const tbody = document.querySelector("#invitesTable tbody");
+      tbody.innerHTML = "";
+      data.invites.forEach((invite) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = \`
+        <td>\${invite.code}</td>
+        <td>\${invite.oneTime ? "Yes" : "No"}</td>
+        <td>\${
+          invite.expireAt ? new Date(invite.expireAt).toLocaleString() : "Never"
+        }</td>
+        <td>\${invite.used ? "Yes" : "No"}</td>
+        <td><button onclick="deleteInvite('\${invite.code}')">Delete</button></td>
+      \`;
+        tbody.appendChild(tr);
+      });
+    }
 
-    const res = await fetch("/api/invites/create", {
-      method: "POST",
-      headers: {
-        "Authorization": "Bearer " + token,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ oneTime, expireSeconds })
-    });
-    const data = await res.json();
-    if (res.ok) {
-      document.getElementById("inviteCreateStatus").textContent = `Invite created: ${data.invite.code}`;
-      loadInvites();
-    } else {
-      document.getElementById("inviteCreateStatus").textContent = data.error || "Failed to create invite";
+    async function deleteInvite(code) {
+      if (!confirm("Delete invite code " + code + "?")) return;
+      const res = await fetch("/api/invites/delete", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + token,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ code }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        loadInvites();
+        alert("Deleted invite " + code);
+      } else {
+        alert(data.error || "Failed to delete invite");
+      }
     }
-  }
 
-  async function changeCreationPassword() {
-    const newPassword = document.getElementById("newCreationPassword").value;
-    if (!newPassword) {
-      alert("Enter new password");
-      return;
-    }
-    const res = await fetch("/api/set-creation-password", {
-      method: "POST",
-      headers: {
-        "Authorization": "Bearer " + token,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ newPassword })
-    });
-    const data = await res.json();
-    if (res.ok) {
-      document.getElementById("creationPassStatus").textContent = "Signup password updated!";
-    } else {
-      document.getElementById("creationPassStatus").textContent = data.error || "Failed to update";
-    }
-  }
+    async function createInvite() {
+      const oneTime = document.getElementById("inviteOneTime").checked;
+      let expireSeconds = Number(document.getElementById("inviteExpire").value);
+      if (expireSeconds < 0 || isNaN(expireSeconds)) expireSeconds = 0;
+      if (expireSeconds === 0) expireSeconds = null;
 
-  async function saveCodes() {
-    const data = {
-      worldName: document.getElementById("worldName").value,
-      word1: document.getElementById("word1").value,
-      word2: document.getElementById("word2").value,
-      word3: document.getElementById("word3").value,
-      word4: document.getElementById("word4").value,
-      worldConnectionId: document.getElementById("worldConnectionId").value,
-    };
-    const res = await fetch("/api/save", {
-      method: "POST",
-      headers: {
-        "Authorization": "Bearer " + token,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(data)
-    });
-    const resp = await res.json();
-    const statusEl = document.getElementById("saveStatus");
-    if (res.ok) {
-      statusEl.textContent = "Saved successfully!";
-      statusEl.className = "success";
-    } else {
-      statusEl.textContent = resp.error || "Failed to save";
-      statusEl.className = "error";
+      const res = await fetch("/api/invites/create", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + token,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ oneTime, expireSeconds }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        document.getElementById(
+          "inviteCreateStatus"
+        ).textContent = \`Invite created: \${data.invite.code}\`;
+        loadInvites();
+      } else {
+        document.getElementById("inviteCreateStatus").textContent =
+          data.error || "Failed to create invite";
+      }
     }
-  }
 
-  async function loadCodes() {
-    const res = await fetch("/api/load", {
-      headers: { Authorization: "Bearer " + token }
-    });
-    const data = await res.json();
-    if (res.ok) {
-      document.getElementById("worldName").value = data.worldName || "";
-      document.getElementById("word1").value = data.word1 || "";
-      document.getElementById("word2").value = data.word2 || "";
-      document.getElementById("word3").value = data.word3 || "";
-      document.getElementById("word4").value = data.word4 || "";
-      document.getElementById("worldConnectionId").value = data.worldConnectionId || "";
-    } else {
-      alert(data.error || "Failed to load codes");
+    async function changeCreationPassword() {
+      const newPassword =
+        document.getElementById("newCreationPassword").value.trim();
+      if (!newPassword) {
+        alert("Enter new password");
+        return;
+      }
+      const res = await fetch("/api/set-creation-password", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + token,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ newPassword }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        document.getElementById("creationPassStatus").textContent =
+          "Signup password updated!";
+      } else {
+        document.getElementById("creationPassStatus").textContent =
+          data.error || "Failed to update";
+      }
     }
-  }
 
-  async function deleteAccount() {
-    if (!document.getElementById("confirmDelete").checked) {
-      alert("You must confirm deletion first.");
-      return;
+    async function saveCodes() {
+      const data = {
+        worldName: document.getElementById("worldName").value,
+        word1: document.getElementById("word1").value,
+        word2: document.getElementById("word2").value,
+        word3: document.getElementById("word3").value,
+        word4: document.getElementById("word4").value,
+        worldConnectionId: document.getElementById("worldConnectionId").value,
+      };
+      const res = await fetch("/api/save", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + token,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(data),
+      });
+      const resp = await res.json();
+      const statusEl = document.getElementById("saveStatus");
+      if (res.ok) {
+        statusEl.textContent = "Saved successfully!";
+        statusEl.className = "success";
+      } else {
+        statusEl.textContent = resp.error || "Failed to save";
+        statusEl.className = "error";
+      }
     }
-    if (!confirm("This will permanently delete your account. Continue?")) return;
-    const res = await fetch("/api/account/delete", {
-      method: "POST",
-      headers: {
-        "Authorization": "Bearer " + token,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ confirm: true })
-    });
-    const data = await res.json();
-    if (res.ok) {
-      alert("Account deleted. Redirecting to signup.");
+
+    async function loadCodes() {
+      const res = await fetch("/api/load", {
+        headers: { Authorization: "Bearer " + token },
+      });
+      const data = await res.json();
+      if (res.ok) {
+        document.getElementById("worldName").value = data.worldName || "";
+        document.getElementById("word1").value = data.word1 || "";
+        document.getElementById("word2").value = data.word2 || "";
+        document.getElementById("word3").value = data.word3 || "";
+        document.getElementById("word4").value = data.word4 || "";
+        document.getElementById("worldConnectionId").value = data.worldConnectionId || "";
+      } else {
+        alert(data.error || "Failed to load codes");
+      }
+    }
+
+    async function deleteAccount() {
+      if (!document.getElementById("confirmDelete").checked) {
+        alert("You must confirm deletion first.");
+        return;
+      }
+      if (!confirm("This will permanently delete your account. Continue?")) return;
+      const res = await fetch("/api/account/delete", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + token,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ confirm: true }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        alert("Account deleted. Redirecting to signup.");
+        localStorage.clear();
+        location.href = "/signup";
+      } else {
+        alert(data.error || "Failed to delete account");
+      }
+    }
+
+    function logout() {
       localStorage.clear();
-      location.href = "/signup";
-    } else {
-      alert(data.error || "Failed to delete account");
+      location.href = "/login.html";
     }
-  }
 
-  function logout() {
-    localStorage.clear();
-    location.href = "/login.html";
-  }
-
-  loadCodes();
-</script>
-</body></html>`;
+    loadCodes();
+  </script>
+</body>
+</html>`;
